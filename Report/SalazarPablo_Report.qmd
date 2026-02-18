@@ -1,0 +1,328 @@
+---
+title: "Differential Expression Analysis"
+subtitle: "_Aspergillus fumigatus conidia_ infection of airway epithelial cells"
+author: "Pablo Salazar-Méndez"
+date: "2024-06-18"
+format:
+    pdf: default
+---
+
+# Introduction
+
+_Aspergillus fumigatus_ is a ubiquitous fungus and opportunistic pathogen that causes serious infections in people with weakened immune systems. The interaction between its inhaled conidia and respiratory epithelial cells is a critical step in the infectious process. Understanding the molecular changes in these cells after contact provides insight into the pathogenesis of aspergillosis and identifies new therapeutic targets. 
+
+In this report, I analyze RNA-seq data from primary human bronchial epithelial (HBEC) cells following interaction with _A. fumigatus conidia_ at 2, 6, and 12 hours. The goal is to identify differentially expressed involved in the host response to infection.
+
+# Methodology
+
+To fulfill the objectives of this project, I performed an analysis using `limma` and `recount3` R packages. The analysis was conducted on the `recount3` datasets, which provides access to a large collection of RNA-seq data. The `limma` package was used to identify differentially expressed genes between the conditions of interest.
+
+To select a dataset I first explored some of the available projects, I runned the following command:
+
+```{r}
+#| echo: true
+#| eval: true
+#| message: true
+
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+    install.packages("BiocManager")
+}
+
+if (!requireNamespace("recount3", quietly = TRUE)) {
+    BiocManager::install("recount3")
+}
+
+invisible(library(recount3))
+
+## Selecting a project of interest
+human_projects <- available_projects()
+project_name <- "SRP048565"
+project_info <- subset(
+    human_projects,
+    project == project_name & project_type == "data_sources"
+)
+
+## Cleaning unused variables
+rm(human_projects, project_name)
+invisible(gc())
+
+project_info
+```
+
+# Analysis
+
+The project `SRP048565` was selected for the analysis, which contains 18 samples from primary human bronchial epithelial (HBEC) cells following interaction with _A. fumigatus conidia_ at 2, 6, and 12 hours in order to examine the infection of airway epithelial cells at multiple time points of co-incubation (see the [NCBI site](https://www.ncbi.nlm.nih.gov/sra/SRX718212%5Baccn%5D)).
+
+```{r}
+#| echo: true
+#| eval: true
+#| message: true
+
+## Generating the object for the selected project
+rse_SRP048565 <- create_rse(project_info)
+
+## Exploring the object
+rm(project_info)
+rse_SRP048565
+```
+
+With the RSE object generated, I proceeded to transform the counts per nucleotide to counts per read.
+
+```{r}
+#| echo: true
+#| eval: true
+
+assay(rse_SRP048565, "counts") <- compute_read_counts(rse_SRP048565)
+
+## Exploring the sample attributes
+rse_SRP048565$sra.sample_attributes
+```
+
+Because there is consistency in the sample attributes, I expanded them to have a more detailed view of the experimental conditions and prepared the data for the statistical modeling.
+
+```{r}
+#| echo: true
+#| eval: true
+
+## As in the class example, here I used the experiment data
+rse_SRP048565 <- expand_sra_attributes(rse_SRP048565)
+colData(rse_SRP048565)[, grepl("^sra_attribute", colnames(colData(rse_SRP048565)))]
+
+## Statistical modeling preparation of my interest variables
+rse_SRP048565$sra_attribute.time <- factor(
+    rse_SRP048565$sra_attribute.time,
+    levels = c("2hr", "6hr", "12hr")
+)
+rse_SRP048565$sra_attribute.infection <- factor(
+    rse_SRP048565$sra_attribute.infection,
+    levels = c("Control", "Afum")
+)
+
+## Summary of this variables
+summary(as.data.frame(colData(rse_SRP048565)[
+    , grepl("^sra_attribute.(time|infection)$", colnames(colData(rse_SRP048565)))
+]))
+```
+
+As it is observed, there are 6 samples for each time point (2, 6, and 12 hours) and for each condition (infected and non-infected). This allows for a balanced design in the differential expression analysis. Because of the latter, time anf infection were used as the main variables of interest in the statistical modeling.
+
+## Data Quality Assessment and Filtering
+
+```{r}
+#| echo: true
+#| eval: true
+#| message: true
+
+## Assessing data quality through QC
+rse_SRP048565$assigned_gene_prop <- rse_SRP048565$recount_qc.gene_fc_count_all.assigned / rse_SRP048565$recount_qc.gene_fc_count_all.total
+summary(rse_SRP048565$assigned_gene_prop)
+
+## Visualizing the distribution of assigned gene proportions
+hist(rse_SRP048565$assigned_gene_prop, main = "Distribution of Assigned Gene Proportions", xlab = "Proportion of Assigned Genes", col = "lightblue")
+```
+
+The histogram of the assigned gene proportions shows that most samples have a high proportion of assigned genes, which is a **good indicator of data quality**. However, there is some variability among the samples, which could be due to differences in sequencing depth or sample quality. To further investigate this, I created a boxplot to compare the assigned gene proportions between the infected and non-infected samples across the different time points.
+
+```{r}
+#| echo: true
+#| eval: true
+
+boxplot(rse_SRP048565$assigned_gene_prop ~ rse_SRP048565$sra_attribute.infection, main = "Assigned Gene Proportions by Treatment", xlab = "Treatment", ylab = "Proportion of Assigned Genes", col = "lightgreen")
+```
+
+Because no evidence supported a difference in the assigned gene proportions between the infected and non-infected samples, I decided to filter the data based on a threshold of 0.1 for gene expression, as the lowly expressed genes may not be biologically relevant and could introduce noise into the analysis.
+
+```{r}
+#| echo: true
+#| eval: true
+
+if (!requireNamespace("edgeR", quietly = TRUE)) {
+    BiocManager::install("edgeR", update = FALSE)
+}
+
+invisible(library("edgeR"))
+
+## Extracting the count matrix
+counts_matrix <- assay(rse_SRP048565)
+
+## Information about the groups
+group <- as.factor(rse_SRP048565$sra_attribute.infection)
+
+## Expression filter
+keep_genes <- filterByExpr(counts_matrix, group=group)
+
+## Fetching the filtered data
+rse_SRP048565_filtered <- rse_SRP048565[keep_genes,]
+
+## Exploring dimensions of the filtered data
+dim(rse_SRP048565_filtered)
+```
+
+```{r}
+#| echo: true
+#| eval: true
+
+rm(group, keep_genes)
+invisible(gc())
+
+## Percentage of genes retained after filtering
+round(nrow(rse_SRP048565_filtered) * 100 / nrow(rse_SRP048565), 2)
+```
+
+After applying the filtration function to the data, I retained approximately 51.2% of the genes, which indicates that a significant portion of the lowly expressed genes were removed from the analysis. This step is crucial for improving the statistical power of the differential expression analysis and reducing the likelihood of false positives.
+
+## Normalization
+
+```{r}
+#| echo: true
+#| eval: true
+
+## Scaling factors for normalization
+dge <- DGEList(counts = assay(rse_SRP048565_filtered, "counts"), genes = rowData(rse_SRP048565_filtered))
+dge <- calcNormFactors(dge)
+```
+
+Normalization of RNA-seq expression data is necessary because compositional bias and differences in library sizes can distort the results of differential expression analysis. The `calcNormFactors` function from the `edgeR` package estimates scaling factors (by default using the TMM method) to adjust for these biases between samples. These normalization factors are incorporated into the statistical model, ensuring that expression levels are comparable across samples and enabling accurate identification of differentially expressed genes.
+
+## Differential Expression Analysis
+
+Differential expression was assessed by comparing infected vs non-infected samples within each time point (2, 6, and 12 hours). To enable time-specific contrasts, we modeled each time-infection combination as a separate group in the design matrix. This approach provides straightforward contrasts for infected vs. control at each time point while accounting for baseline differences among time points.
+
+```{r}
+#| echo: true
+#| eval: true
+
+if (!requireNamespace("limma", quietly = TRUE)) {
+    BiocManager::install("limma", update = FALSE)
+}
+
+library("limma")
+
+## Fetching metadata for the model matrix
+time <- droplevels(rse_SRP048565_filtered$sra_attribute.time)
+infection <- droplevels(rse_SRP048565_filtered$sra_attribute.infection)
+
+## Combined group factor of time x infection
+group <- interaction(time, infection, sep = "_", drop = TRUE)
+```
+
+The design matrix was structured to include separate groups for each time-infection combination, so there was no intercept as each computed coefficient corresponds to a specific time-infection group average expression.
+
+```{r}
+#| echo: true
+#| eval: true
+#| message: true
+
+## Design matrix without intercept
+mod <- model.matrix(~ 0 + group)
+
+## Viewing the model matrix levels
+colnames(mod) <- levels(group)
+colnames(mod) <- paste0("tr", colnames(mod))
+colnames(mod)
+```
+
+```{r}
+#| echo: true
+#| eval: true
+
+vGene <- voom(dge, mod, plot = TRUE)
+```
+
+The plot shows that the samples with lower count sizes have higher variability, meaning that the genes with low expression levels tend to have more distance with the mean in their expression measurements, as they are more affected by technical noise and sampling variability.
+
+```{r}
+#| echo: true
+#| eval: true
+
+## The model matrix is already contained in the voom object, so we can directly fit the linear model
+fit <- lmFit(vGene)
+
+## Contrasts for infected vs control at each time point
+cont <- makeContrasts(
+  Inf_vs_Ctrl_2hr  = tr2hr_Afum  - tr2hr_Control,
+  Inf_vs_Ctrl_6hr  = tr6hr_Afum  - tr6hr_Control,
+  Inf_vs_Ctrl_12hr = tr12hr_Afum - tr12hr_Control,
+  levels = mod
+)
+
+## Re-expressing the model fit with the specified contrasts
+## Adjust the variance estimates for the contrasts
+eb_results <- eBayes(contrasts.fit(fit, cont))
+
+## Tables
+tt_2hr  <- topTable(eb_results, coef="Inf_vs_Ctrl_2hr",  number=Inf)
+tt_6hr  <- topTable(eb_results, coef="Inf_vs_Ctrl_6hr",  number=Inf)
+tt_12hr <- topTable(eb_results, coef="Inf_vs_Ctrl_12hr", number=Inf)
+
+dim(tt_12hr)
+```
+
+All genes are considered in each table (all have the same dimensions), sorted by their significance with an `FDR < 0.05`, this election allows me to filter according to an specified threshold.
+
+### Time-specific DEGs
+
+```{r}
+#| echo: true
+#| eval: true
+#| message: true
+
+## DEGs with FDR < 0.05
+table(tt_2hr$adj.P.Val < 0.05)
+```
+
+```{r}
+#| echo: true
+#| eval: true
+#| message: true
+
+volcanoplot(eb_results, coef = 2, highlight = 3, names = tt_2hr$gene_name)
+```
+
+For the 2-hour time point, there are 255 differentially expressed genes (DEGs) with an FDR < 0.05, indicating a lower response to _A. fumigatus_ infection at an early stage.The volcano plot reveals that the most significant DEGs at this time point have moderate fold changes, suggesting that the host response is just beginning to activate and may involve subtle changes in gene expression.
+
+Possible biomarkers of infection might be the gene `AC013271` as the contrast were described as `Infected - Control` and so the positive $logFC$ value indicates that this gene is upregulated in the infected samples compared to the controls. Further analysis would be needed to determine the biological relevance of this gene in the context of _A. fumigatus_ infection.
+
+```{r}
+#| echo: true
+#| eval: true
+#| message: true
+
+table(tt_6hr$adj.P.Val < 0.05)
+```
+
+```{r}
+#| echo: true
+#| eval: true
+#| message: true
+
+volcanoplot(eb_results, coef = 2, highlight = 3, names = tt_6hr$gene_name)
+```
+
+At the 6-hour time point, there are no DEGs with an FDR < 0.05, suggesting an abscent responce to the pathogen in a more advanced stage of the illness.
+
+```{r}
+#| echo: true
+#| eval: true
+#| message: true
+
+table(tt_12hr$adj.P.Val < 0.05)
+```
+
+```{r}
+#| echo: true
+#| eval: true
+#| message: true
+
+volcanoplot(eb_results, coef = 2, highlight = 3, names = tt_12hr$gene_name)
+```
+
+Whereas at the 12-hour time point, it's observed a significant increase in the number of DEGs, with 4615 genes showing differential expression (FDR < 0.05). This indicates a robust host response to _A. fumigatus_ infection at this later stage, which may reflect the activation of immune pathways and cellular processes involved in combating the infection.
+
+```{r}
+## Cleaning the variables in the NameSpace
+rm(list = ls())
+invisible(gc())
+```
+
+# Results
