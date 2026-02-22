@@ -2,14 +2,16 @@
 title: "Differential Expression Analysis"
 subtitle: "_Aspergillus fumigatus conidia_ infection of airway epithelial cells"
 author: "Pablo Salazar-Méndez"
-date: "2024-06-18"
-format:
-    pdf: default
+date: "2024-06-22"
+format: pdf
+
+bibliography: references.bib
+csl: apa.csl
 ---
 
 # Introduction
 
-_Aspergillus fumigatus_ is a ubiquitous fungus and opportunistic pathogen that causes serious infections in people with weakened immune systems. The interaction between its inhaled conidia and respiratory epithelial cells is a critical step in the infectious process. Understanding the molecular changes in these cells after contact provides insight into the pathogenesis of aspergillosis and identifies new therapeutic targets. 
+_Aspergillus fumigatus_ is a ubiquitous fungus and opportunistic pathogen that causes serious infections in people with weakened immune systems. The interaction between its inhaled conidia and respiratory epithelial cells is a critical step in the infectious process. Understanding the molecular changes in these cells after contact provides insight into the pathogenesis of aspergillosis and identifies new therapeutic targets (@dagenais-2009). 
 
 In this report, I analyze RNA-seq data from primary human bronchial epithelial (HBEC) cells following interaction with _A. fumigatus conidia_ at 2, 6, and 12 hours. The goal is to identify differentially expressed involved in the host response to infection.
 
@@ -19,7 +21,7 @@ To fulfill the objectives of this project, I performed an analysis using `limma`
 
 To select a dataset I first explored some of the available projects, I runned the following command:
 
-```{r}
+```{r Fetching data}
 #| echo: true
 #| eval: true
 #| message: true
@@ -31,6 +33,8 @@ if (!requireNamespace("BiocManager", quietly = TRUE)) {
 if (!requireNamespace("recount3", quietly = TRUE)) {
     BiocManager::install("recount3")
 }
+
+options(recount3_url = "https://data.idies.jhu.edu/recount3/data/")
 
 invisible(library(recount3))
 
@@ -53,7 +57,7 @@ project_info
 
 The project `SRP048565` was selected for the analysis, which contains 18 samples from primary human bronchial epithelial (HBEC) cells following interaction with _A. fumigatus conidia_ at 2, 6, and 12 hours in order to examine the infection of airway epithelial cells at multiple time points of co-incubation (see the [NCBI site](https://www.ncbi.nlm.nih.gov/sra/SRX718212%5Baccn%5D)).
 
-```{r}
+```{r Creating RSE object}
 #| echo: true
 #| eval: true
 #| message: true
@@ -68,7 +72,7 @@ rse_SRP048565
 
 With the RSE object generated, I proceeded to transform the counts per nucleotide to counts per read.
 
-```{r}
+```{r Transforming counts}
 #| echo: true
 #| eval: true
 
@@ -80,9 +84,10 @@ rse_SRP048565$sra.sample_attributes
 
 Because there is consistency in the sample attributes, I expanded them to have a more detailed view of the experimental conditions and prepared the data for the statistical modeling.
 
-```{r}
+```{r Expanding sample attributes}
 #| echo: true
 #| eval: true
+#| message: true
 
 ## As in the class example, here I used the experiment data
 rse_SRP048565 <- expand_sra_attributes(rse_SRP048565)
@@ -108,7 +113,7 @@ As it is observed, there are 6 samples for each time point (2, 6, and 12 hours) 
 
 ## Data Quality Assessment and Filtering
 
-```{r}
+```{r Data quality assessment}
 #| echo: true
 #| eval: true
 #| message: true
@@ -123,16 +128,16 @@ hist(rse_SRP048565$assigned_gene_prop, main = "Distribution of Assigned Gene Pro
 
 The histogram of the assigned gene proportions shows that most samples have a high proportion of assigned genes, which is a **good indicator of data quality**. However, there is some variability among the samples, which could be due to differences in sequencing depth or sample quality. To further investigate this, I created a boxplot to compare the assigned gene proportions between the infected and non-infected samples across the different time points.
 
-```{r}
+```{r Boxplot of assigned gene proportions by treatment}
 #| echo: true
 #| eval: true
 
 boxplot(rse_SRP048565$assigned_gene_prop ~ rse_SRP048565$sra_attribute.infection, main = "Assigned Gene Proportions by Treatment", xlab = "Treatment", ylab = "Proportion of Assigned Genes", col = "lightgreen")
 ```
 
-Because no evidence supported a difference in the assigned gene proportions between the infected and non-infected samples, I decided to filter the data based on a threshold of 0.1 for gene expression, as the lowly expressed genes may not be biologically relevant and could introduce noise into the analysis.
+Because no evidence supported a difference in the assigned gene proportions between the infected and non-infected samples, I decided to filter the data using `edgeR::filterByExpr()` for gene expression, as the lowly expressed genes may not be biologically relevant and could introduce noise into the analysis.
 
-```{r}
+```{r Filtering lowly expressed genes}
 #| echo: true
 #| eval: true
 
@@ -158,7 +163,7 @@ rse_SRP048565_filtered <- rse_SRP048565[keep_genes,]
 dim(rse_SRP048565_filtered)
 ```
 
-```{r}
+```{r Percentage of genes retained after filtering}
 #| echo: true
 #| eval: true
 
@@ -173,7 +178,7 @@ After applying the filtration function to the data, I retained approximately 51.
 
 ## Normalization
 
-```{r}
+```{r Normalization}
 #| echo: true
 #| eval: true
 
@@ -182,13 +187,13 @@ dge <- DGEList(counts = assay(rse_SRP048565_filtered, "counts"), genes = rowData
 dge <- calcNormFactors(dge)
 ```
 
-Normalization of RNA-seq expression data is necessary because compositional bias and differences in library sizes can distort the results of differential expression analysis. The `calcNormFactors` function from the `edgeR` package estimates scaling factors (by default using the TMM method) to adjust for these biases between samples. These normalization factors are incorporated into the statistical model, ensuring that expression levels are comparable across samples and enabling accurate identification of differentially expressed genes.
+Normalization of RNA-seq expression data is necessary because compositional bias and differences in library sizes can distort the results of differential expression analysis (@robinson-2010). The `calcNormFactors` function from the `edgeR` package estimates scaling factors (by default using the TMM method) to adjust for these biases between samples. These normalization factors are incorporated into the statistical model, ensuring that expression levels are comparable across samples and enabling accurate identification of differentially expressed genes.
 
 ## Differential Expression Analysis
 
 Differential expression was assessed by comparing infected vs non-infected samples within each time point (2, 6, and 12 hours). To enable time-specific contrasts, we modeled each time-infection combination as a separate group in the design matrix. This approach provides straightforward contrasts for infected vs. control at each time point while accounting for baseline differences among time points.
 
-```{r}
+```{r Contrasts for model matrix}
 #| echo: true
 #| eval: true
 
@@ -208,7 +213,7 @@ group <- interaction(time, infection, sep = "_", drop = TRUE)
 
 The design matrix was structured to include separate groups for each time-infection combination, so there was no intercept as each computed coefficient corresponds to a specific time-infection group average expression.
 
-```{r}
+```{r Model matrix without intercept}
 #| echo: true
 #| eval: true
 #| message: true
@@ -222,7 +227,7 @@ colnames(mod) <- paste0("tr", colnames(mod))
 colnames(mod)
 ```
 
-```{r}
+```{r Voom model}
 #| echo: true
 #| eval: true
 
@@ -231,7 +236,7 @@ vGene <- voom(dge, mod, plot = TRUE)
 
 The plot shows that the samples with lower count sizes have higher variability, meaning that the genes with low expression levels tend to have more distance with the mean in their expression measurements, as they are more affected by technical noise and sampling variability.
 
-```{r}
+```{r Fitting the linear model}
 #| echo: true
 #| eval: true
 
@@ -262,7 +267,8 @@ All genes are considered in each table (all have the same dimensions), sorted by
 
 ### Time-specific DEGs
 
-```{r}
+#### 2 hours
+```{r DEGs at 2 hours}
 #| echo: true
 #| eval: true
 #| message: true
@@ -271,19 +277,80 @@ All genes are considered in each table (all have the same dimensions), sorted by
 table(tt_2hr$adj.P.Val < 0.05)
 ```
 
-```{r}
+```{r DEGs with adj.P.Val < 0.05 and logFC > 1}
 #| echo: true
 #| eval: true
 #| message: true
 
-volcanoplot(eb_results, coef = 2, highlight = 3, names = tt_2hr$gene_name)
+## DEGs with FDR < 0.05
+head(tt_2hr[(tt_2hr$adj.P.Val < 0.05) & (abs(tt_2hr$logFC) > 1), ], n = 5)
 ```
 
-For the 2-hour time point, there are 255 differentially expressed genes (DEGs) with an FDR < 0.05, indicating a lower response to _A. fumigatus_ infection at an early stage.The volcano plot reveals that the most significant DEGs at this time point have moderate fold changes, suggesting that the host response is just beginning to activate and may involve subtle changes in gene expression.
+```{r Volcano plot for 2 hours}
+#| echo: true
+#| eval: true
+#| message: true
 
-Possible biomarkers of infection might be the gene `AC013271` as the contrast were described as `Infected - Control` and so the positive $logFC$ value indicates that this gene is upregulated in the infected samples compared to the controls. Further analysis would be needed to determine the biological relevance of this gene in the context of _A. fumigatus_ infection.
+## Reorganizing the gene names with the LM results order
+gene_names <- rowData(rse_SRP048565_filtered)$gene_name
+names(gene_names) <- rownames(rse_SRP048565_filtered)
 
-```{r}
+volcanoplot(
+  eb_results,
+  coef = "Inf_vs_Ctrl_2hr",
+  highlight = 3,
+  names = gene_names[rownames(eb_results)]
+)
+```
+
+At the 2 hour time point, there are 255 DEGs with an `FDR < 0.05`, indicating an early host response to _A. fumigatus_ infection. The volcano plot shows that most of the DEGs have a log fold change (`logFC`) close to zero, suggesting that the changes in gene expression are relatively modest at this early stage of infection. However, from the three most significant DEGs two are upregulated (*ZNF750* and *ZFAND1*) and one is downregulated for the infected samples compared to controls.
+
+[ZNF750](https://www.genecards.org/cgi-bin/carddisp.pl?gene=ZNF750&keywords=ZNF50) and [ZFAND1](https://www.genecards.org/cgi-bin/carddisp.pl?gene=ZFAND1&keywords=ZFAND1) both are transcription factors with zinc finger domains critical for regulating epithelial homeostasis and stress adaptation. The first contributes to epithelial maturation and barrier integrity. While the second regulates cytoplasmic stress granule turnover and facilitating proteasome recruitment during acute cellular stress, which supports protein quality control and recovery from exogenous insults.
+
+In the other hand, the downregulated gene [CITED4](https://www.genecards.org/cgi-bin/carddisp.pl?gene=CITED4&keywords=CITED4) functions as a transcriptional coactivator interacting with _CBP/p300_ and _TFAP2_, modulating RNA polymerase II–dependent gene expression and influencing transcriptional programs linked to cellular differentiation and stress responses.
+
+There is also a gene with a `logFC > 1` and an `adj.P.Val < 0.05`, which is [IL36G](https://www.genecards.org/cgi-bin/carddisp.pl?gene=IL36G&keywords=IL36G), a member of the IL-1 cytokine family, functions as a pro-inflammatory epithelial-derived cytokine that activates _NF-κB_ and _MAPK_ signaling.
+
+In the context of _Aspergillus fumigatus conidia_ exposure in HBECs (an interaction known to **trigger inflammatory signaling, oxidative stress, and epithelial remodeling**), the upregulation of stress-response regulators such as *ZFAND1* and differentiation-associated factors like *ZNF750* may reflect **activation of epithelial defense and repair mechanisms**. Conversely, the downregulation of _CITED4_ in infected cells could indicate **suppression or reprogramming of specific transcriptional coactivation pathways during the host response**, potentially shifting the epithelial transcriptional landscape toward stress and innate immune programs.
+
+The upregulated expression of _IL36G_ may indicate an early pro-inflammatory response to _A. fumigatus_ exposure. This suggests that the infected HBECs are **initiating an inflammatory signaling cascade** in response to the fungal _conidia_, which could contribute to the recruitment of immune cells and the activation of downstream defense mechanisms.
+
+```{r Heatmap of the top 20 DEGs at 2 hours}
+#| echo: true
+#| eval: true
+#| message: true
+
+if (!requireNamespace("pheatmap", quietly = TRUE)) {
+    BiocManager::install("pheatmap", update = FALSE)
+}
+library("pheatmap")
+
+## Extracting the genes of interest
+expression_ht <- vGene$E[rank(tt_2hr$adj.P.Val) <= 50, ]
+
+df <- as.data.frame(colData(rse_SRP048565_filtered)[, "sra_attribute.infection", drop = FALSE])
+colnames(df) <- "Infection"
+
+# (opcional pero recomendable) asegurar factor
+df$Infection <- factor(df$Infection)
+
+pheatmap(
+  expression_ht,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  annotation_col = df,
+  show_rownames = FALSE,
+  show_colnames = FALSE,
+  main = "Top 50 DEGs at 2 hours"
+)
+```
+
+At the 2 hours-time point, two main clusters appear, one full of control samples and the other mixing both treatments. This might suggests that the infection samples have gene expression levels that are similar in a way to those shown in some control samples. If a Venn diagram would be made, several significant genes may be present in control and infection samples.
+
+Still, most control samples cluster together showing low similarity with the infected ones.
+
+#### 6 hours
+```{r DEGs at 6 hours}
 #| echo: true
 #| eval: true
 #| message: true
@@ -291,17 +358,19 @@ Possible biomarkers of infection might be the gene `AC013271` as the contrast we
 table(tt_6hr$adj.P.Val < 0.05)
 ```
 
-```{r}
+```{r DEGs with adj.P.Val < 0.05 and logFC > 1 at 6 hours}
 #| echo: true
 #| eval: true
 #| message: true
 
-volcanoplot(eb_results, coef = 2, highlight = 3, names = tt_6hr$gene_name)
+## DEGs with FDR < 0.05
+head(tt_6hr[(tt_6hr$adj.P.Val < 0.05) & (abs(tt_6hr$logFC) > 1), ], n = 5)
 ```
 
-At the 6-hour time point, there are no DEGs with an FDR < 0.05, suggesting an abscent responce to the pathogen in a more advanced stage of the illness.
+At the 6-hour time point, there are no DEGs with an FDR < 0.05, suggesting an abscent responce to the pathogen in a more advanced stage of the illness. Because of the latter, it is possible that the host response is transient and peaks at an earlier time point, or that the response is more complex and involves changes in gene expression that are not captured by the statistical analysis at this time point.
 
-```{r}
+#### 12 hours
+```{r DEGs at 12 hours}
 #| echo: true
 #| eval: true
 #| message: true
@@ -309,20 +378,65 @@ At the 6-hour time point, there are no DEGs with an FDR < 0.05, suggesting an ab
 table(tt_12hr$adj.P.Val < 0.05)
 ```
 
-```{r}
+```{r DEGs with adj.P.Val < 0.05 and logFC > 1 at 12 hours}
 #| echo: true
 #| eval: true
 #| message: true
 
-volcanoplot(eb_results, coef = 2, highlight = 3, names = tt_12hr$gene_name)
+head(tt_12hr[(tt_12hr$adj.P.Val < 0.05) & (abs(tt_12hr$logFC) > 1), ], n = 5)
 ```
 
-Whereas at the 12-hour time point, it's observed a significant increase in the number of DEGs, with 4615 genes showing differential expression (FDR < 0.05). This indicates a robust host response to _A. fumigatus_ infection at this later stage, which may reflect the activation of immune pathways and cellular processes involved in combating the infection.
+```{r Volcano plot for 12 hours}
+#| echo: true
+#| eval: true
+#| message: true
 
-```{r}
+volcanoplot(eb_results, coef = "Inf_vs_Ctrl_12hr", highlight = 3, names = gene_names[rownames(eb_results)])
+```
+
+For the 12 hour time point, 4615 DEGs were identified with an `FDR < 0.05`, indicating a more robust host response to _A. fumigatus_ infection at this later stage. This time point three most significant DEGs are all upregulated in the infected samples compared to controls, an they are [SERPINB2](https://www.genecards.org/cgi-bin/carddisp.pl?gene=UBN1&keywords=UBN1), [PRDM1](https://www.genecards.org/cgi-bin/carddisp.pl?gene=MAD2L2&keywords=MAD2L2) and an unidentified gene (_AC091633_). _SERPINB2_ acts as a protease inhibitor involved in fibrinolysis and inflammatory signaling pathways, contributing to regulation of extracellular proteolytic activity and tissue remodeling. While _PRDM1_ functions as a transcriptional repressor that regulates interferon-responsive genes and immune-related transcriptional programs.
+
+By examining the genes with a `logFC > 1` and an `adj.P.Val < 0.05`, the other two most significant DEGs are [ANGPTL4](https://www.genecards.org/Search/Keyword?queryString=ANGPTL4) and [SLC20A2](https://www.genecards.org/cgi-bin/carddisp.pl?gene=SLC20A2&keywords=SLC20A2) and also upregulated during infection. The first mediates sodium-dependent phosphate uptake, contributing to cellular metabolic balance and mineral homeostasis, processes that can influence cellular signaling and survival under stress conditions. The second is a secreted regulator of lipid metabolism and endothelial behavior, modulating vascular permeability, extracellular matrix interactions, and cellular adhesion.
+
+In bronchial epithelial cells exposed to _Aspergillus fumigatus conidia_, these upregulated genes may reflect coordinated responses integrating metabolic adaptation (_SLC20A2_), modulation of epithelial-vascular interactions and barrier integrity (_ANGPTL4_), control of extracellular protease activity during inflammation (_SERPINB2_), and transcriptional reprogramming of immune signaling pathways (_PRDM1_). Given that fungal contact induces epithelial activation, cytokine production, oxidative stress, and tissue remodeling, modulation of these genes may contribute to **balancing host defense**, **barrier maintenance**, and **inflammatory regulation** during early antifungal responses.
+
+```{r Heatmap of the top 20 DEGs at 12 hours}
+#| echo: true
+#| eval: true
+#| message: true
+
+## Extracting the genes of interest
+expression_ht <- vGene$E[rank(tt_12hr$adj.P.Val) <= 50, ]
+
+df <- as.data.frame(colData(rse_SRP048565_filtered)[, "sra_attribute.infection", drop = FALSE])
+colnames(df) <- "Infection"
+
+# (opcional pero recomendable) asegurar factor
+df$Infection <- factor(df$Infection)
+
+pheatmap(
+  expression_ht,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  annotation_col = df,
+  show_rownames = FALSE,
+  show_colnames = FALSE,
+  main = "Top 50 DEGs at 12 hours"
+)
+```
+
+This time point shows a very similar behaviour to that in the 2-hours time, which could mean that the dynamics in response to the infection of _A. fumigatus conidia_ follows an equivalent expression pattern as the infection evolves.
+
+```{r CLeaning the variables}
 ## Cleaning the variables in the NameSpace
 rm(list = ls())
 invisible(gc())
 ```
 
 # Results
+
+_A. fumigatus conidia_ is an ambient fungus that infects its host through inhalation, and the interaction between its spores and respiratory epithelial cells is a critical step in the infectious process. The scRNA-seq revealed differentialy expressed genes in the infected samples compared to controls at 2 and 12 hours, but not at 6 hours. At 2 hours, the DEGs were mostly related to stress response and epithelial homeostasis, while at 12 hours, the DEGs were more associated with metabolic adaptation, vascular interactions, and immune regulation. These findings suggest a dynamic host response to _A. fumigatus_ infection that evolves over time, with early activation of defense mechanisms followed by more complex regulatory processes as the infection progresses.
+
+It has been reported that HBECs participates in the attenuation of the inflammatory response to _A. fumigatus_ conidia (@richard-2018), which is consistent with the observed upregulation of genes involved in immune regulation and barrier maintenance at later time points. The absence of DEGs at 6 hours may indicate a transient phase in the host response, where the initial activation subsides before a more robust response emerges at 12 hours. Overall, these results provide insights into the temporal dynamics of the epithelial response to fungal infection and highlight potential targets for therapeutic intervention in aspergillosis.
+
+# References
