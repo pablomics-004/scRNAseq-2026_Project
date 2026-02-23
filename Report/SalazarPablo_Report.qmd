@@ -337,6 +337,9 @@ head(
 #| echo: true
 #| eval: true
 #| message: true
+#| fig-width: 8
+#| fig-height: 6
+#| dpi: 300
 
 ## Reorganizing the gene names with the LM results order
 gene_names <- rowData(rse_SRP048565_filtered)$gene_name
@@ -448,6 +451,9 @@ head(
 #| echo: true
 #| eval: true
 #| message: true
+#| fig-width: 8
+#| fig-height: 6
+#| dpi: 300
 
 volcanoplot(
   eb_results, 
