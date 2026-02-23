@@ -3,7 +3,13 @@ title: "Differential Expression Analysis"
 subtitle: "_Aspergillus fumigatus conidia_ infection of airway epithelial cells"
 author: "Pablo Salazar-Méndez"
 date: "2024-06-22"
-format: pdf
+format:
+  pdf:
+    pdf-engine: xelatex
+    include-in-header:
+      text: |
+        \usepackage{fvextra}
+        \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
 
 bibliography: references.bib
 csl: apa.csl
@@ -13,7 +19,7 @@ csl: apa.csl
 
 _Aspergillus fumigatus_ is a ubiquitous fungus and opportunistic pathogen that causes serious infections in people with weakened immune systems. The interaction between its inhaled conidia and respiratory epithelial cells is a critical step in the infectious process. Understanding the molecular changes in these cells after contact provides insight into the pathogenesis of aspergillosis and identifies new therapeutic targets (@dagenais-2009). 
 
-In this report, I analyze RNA-seq data from primary human bronchial epithelial (HBEC) cells following interaction with _A. fumigatus conidia_ at 2, 6, and 12 hours. The goal is to identify differentially expressed involved in the host response to infection.
+In this report, I analyzed RNA-seq data from primary human bronchial epithelial (HBEC) cells following interaction with _A. fumigatus conidia_ at 2, 6, and 12 hours. The goal is to identify differentially expressed involved in the host response to infection.
 
 # Methodology
 
@@ -21,10 +27,10 @@ To fulfill the objectives of this project, I performed an analysis using `limma`
 
 To select a dataset I first explored some of the available projects, I runned the following command:
 
-```{r Fetching data}
+```{r Importing libraries}
 #| echo: true
 #| eval: true
-#| message: true
+#| message: false
 
 if (!requireNamespace("BiocManager", quietly = TRUE)) {
     install.packages("BiocManager")
@@ -37,6 +43,12 @@ if (!requireNamespace("recount3", quietly = TRUE)) {
 options(recount3_url = "https://data.idies.jhu.edu/recount3/data/")
 
 invisible(library(recount3))
+```
+
+```{r Exploring available projects}
+#| echo: true
+#| eval: true
+#| message: false
 
 ## Selecting a project of interest
 human_projects <- available_projects()
@@ -45,6 +57,11 @@ project_info <- subset(
     human_projects,
     project == project_name & project_type == "data_sources"
 )
+```
+```{r Exploring the selected project}
+#| echo: true
+#| eval: true
+#| message: true
 
 ## Cleaning unused variables
 rm(human_projects, project_name)
@@ -60,10 +77,15 @@ The project `SRP048565` was selected for the analysis, which contains 18 samples
 ```{r Creating RSE object}
 #| echo: true
 #| eval: true
-#| message: true
+#| message: false
 
 ## Generating the object for the selected project
 rse_SRP048565 <- create_rse(project_info)
+```
+```{r Exploring the object}
+#| echo: true
+#| eval: true
+#| message: false
 
 ## Exploring the object
 rm(project_info)
@@ -79,7 +101,7 @@ With the RSE object generated, I proceeded to transform the counts per nucleotid
 assay(rse_SRP048565, "counts") <- compute_read_counts(rse_SRP048565)
 
 ## Exploring the sample attributes
-rse_SRP048565$sra.sample_attributes
+head(rse_SRP048565$sra.sample_attributes)
 ```
 
 Because there is consistency in the sample attributes, I expanded them to have a more detailed view of the experimental conditions and prepared the data for the statistical modeling.
@@ -91,7 +113,11 @@ Because there is consistency in the sample attributes, I expanded them to have a
 
 ## As in the class example, here I used the experiment data
 rse_SRP048565 <- expand_sra_attributes(rse_SRP048565)
-colData(rse_SRP048565)[, grepl("^sra_attribute", colnames(colData(rse_SRP048565)))]
+colData(rse_SRP048565)[
+  , 
+  grepl("^sra_attribute", 
+  colnames(colData(rse_SRP048565)))
+]
 
 ## Statistical modeling preparation of my interest variables
 rse_SRP048565$sra_attribute.time <- factor(
@@ -105,7 +131,9 @@ rse_SRP048565$sra_attribute.infection <- factor(
 
 ## Summary of this variables
 summary(as.data.frame(colData(rse_SRP048565)[
-    , grepl("^sra_attribute.(time|infection)$", colnames(colData(rse_SRP048565)))
+    , 
+    grepl("^sra_attribute.(time|infection)$", 
+    colnames(colData(rse_SRP048565)))
 ]))
 ```
 
@@ -123,7 +151,12 @@ rse_SRP048565$assigned_gene_prop <- rse_SRP048565$recount_qc.gene_fc_count_all.a
 summary(rse_SRP048565$assigned_gene_prop)
 
 ## Visualizing the distribution of assigned gene proportions
-hist(rse_SRP048565$assigned_gene_prop, main = "Distribution of Assigned Gene Proportions", xlab = "Proportion of Assigned Genes", col = "lightblue")
+hist(
+  rse_SRP048565$assigned_gene_prop, 
+  main = "Distribution of Assigned Gene Proportions", 
+  xlab = "Proportion of Assigned Genes", 
+  col = "lightblue"
+)
 ```
 
 The histogram of the assigned gene proportions shows that most samples have a high proportion of assigned genes, which is a **good indicator of data quality**. However, there is some variability among the samples, which could be due to differences in sequencing depth or sample quality. To further investigate this, I created a boxplot to compare the assigned gene proportions between the infected and non-infected samples across the different time points.
@@ -132,21 +165,29 @@ The histogram of the assigned gene proportions shows that most samples have a hi
 #| echo: true
 #| eval: true
 
-boxplot(rse_SRP048565$assigned_gene_prop ~ rse_SRP048565$sra_attribute.infection, main = "Assigned Gene Proportions by Treatment", xlab = "Treatment", ylab = "Proportion of Assigned Genes", col = "lightgreen")
+boxplot(
+  rse_SRP048565$assigned_gene_prop ~ rse_SRP048565$sra_attribute.infection, 
+  main = "Assigned Gene Proportions by Treatment", 
+  xlab = "Treatment", 
+  ylab = "Proportion of Assigned Genes", 
+  col = "lightgreen"
+)
 ```
 
 Because no evidence supported a difference in the assigned gene proportions between the infected and non-infected samples, I decided to filter the data using `edgeR::filterByExpr()` for gene expression, as the lowly expressed genes may not be biologically relevant and could introduce noise into the analysis.
 
-```{r Filtering lowly expressed genes}
+```{r Library for filtering}
 #| echo: true
 #| eval: true
+#| message: false
 
 if (!requireNamespace("edgeR", quietly = TRUE)) {
     BiocManager::install("edgeR", update = FALSE)
 }
 
 invisible(library("edgeR"))
-
+```
+```{r Extracting count matrix and group information for filtering}
 ## Extracting the count matrix
 counts_matrix <- assay(rse_SRP048565)
 
@@ -183,7 +224,10 @@ After applying the filtration function to the data, I retained approximately 51.
 #| eval: true
 
 ## Scaling factors for normalization
-dge <- DGEList(counts = assay(rse_SRP048565_filtered, "counts"), genes = rowData(rse_SRP048565_filtered))
+dge <- DGEList(
+  counts = assay(rse_SRP048565_filtered, "counts"), 
+  genes = rowData(rse_SRP048565_filtered)
+)
 dge <- calcNormFactors(dge)
 ```
 
@@ -283,7 +327,10 @@ table(tt_2hr$adj.P.Val < 0.05)
 #| message: true
 
 ## DEGs with FDR < 0.05
-head(tt_2hr[(tt_2hr$adj.P.Val < 0.05) & (abs(tt_2hr$logFC) > 1), ], n = 5)
+head(
+  tt_2hr[(tt_2hr$adj.P.Val < 0.05) & (abs(tt_2hr$logFC) > 1), ], 
+  n = 5
+)
 ```
 
 ```{r Volcano plot for 2 hours}
@@ -328,7 +375,13 @@ library("pheatmap")
 ## Extracting the genes of interest
 expression_ht <- vGene$E[rank(tt_2hr$adj.P.Val) <= 50, ]
 
-df <- as.data.frame(colData(rse_SRP048565_filtered)[, "sra_attribute.infection", drop = FALSE])
+df <- as.data.frame(
+  colData(rse_SRP048565_filtered)[
+    , 
+    "sra_attribute.infection", 
+    drop = FALSE
+  ]
+)
 colnames(df) <- "Infection"
 
 # (opcional pero recomendable) asegurar factor
@@ -364,7 +417,10 @@ table(tt_6hr$adj.P.Val < 0.05)
 #| message: true
 
 ## DEGs with FDR < 0.05
-head(tt_6hr[(tt_6hr$adj.P.Val < 0.05) & (abs(tt_6hr$logFC) > 1), ], n = 5)
+head(
+  tt_6hr[(tt_6hr$adj.P.Val < 0.05) & (abs(tt_6hr$logFC) > 1), ], 
+  n = 5
+)
 ```
 
 At the 6-hour time point, there are no DEGs with an FDR < 0.05, suggesting an abscent responce to the pathogen in a more advanced stage of the illness. Because of the latter, it is possible that the host response is transient and peaks at an earlier time point, or that the response is more complex and involves changes in gene expression that are not captured by the statistical analysis at this time point.
@@ -383,7 +439,9 @@ table(tt_12hr$adj.P.Val < 0.05)
 #| eval: true
 #| message: true
 
-head(tt_12hr[(tt_12hr$adj.P.Val < 0.05) & (abs(tt_12hr$logFC) > 1), ], n = 5)
+head(
+  tt_12hr[(tt_12hr$adj.P.Val < 0.05) & (abs(tt_12hr$logFC) > 1), ], n = 5
+)
 ```
 
 ```{r Volcano plot for 12 hours}
@@ -391,7 +449,12 @@ head(tt_12hr[(tt_12hr$adj.P.Val < 0.05) & (abs(tt_12hr$logFC) > 1), ], n = 5)
 #| eval: true
 #| message: true
 
-volcanoplot(eb_results, coef = "Inf_vs_Ctrl_12hr", highlight = 3, names = gene_names[rownames(eb_results)])
+volcanoplot(
+  eb_results, 
+  coef = "Inf_vs_Ctrl_12hr", 
+  highlight = 3, 
+  names = gene_names[rownames(eb_results)]
+)
 ```
 
 For the 12 hour time point, 4615 DEGs were identified with an `FDR < 0.05`, indicating a more robust host response to _A. fumigatus_ infection at this later stage. This time point three most significant DEGs are all upregulated in the infected samples compared to controls, an they are [SERPINB2](https://www.genecards.org/cgi-bin/carddisp.pl?gene=UBN1&keywords=UBN1), [PRDM1](https://www.genecards.org/cgi-bin/carddisp.pl?gene=MAD2L2&keywords=MAD2L2) and an unidentified gene (_AC091633_). _SERPINB2_ acts as a protease inhibitor involved in fibrinolysis and inflammatory signaling pathways, contributing to regulation of extracellular proteolytic activity and tissue remodeling. While _PRDM1_ functions as a transcriptional repressor that regulates interferon-responsive genes and immune-related transcriptional programs.
@@ -408,7 +471,12 @@ In bronchial epithelial cells exposed to _Aspergillus fumigatus conidia_, these 
 ## Extracting the genes of interest
 expression_ht <- vGene$E[rank(tt_12hr$adj.P.Val) <= 50, ]
 
-df <- as.data.frame(colData(rse_SRP048565_filtered)[, "sra_attribute.infection", drop = FALSE])
+df <- as.data.frame(
+  colData(rse_SRP048565_filtered)[
+    , "sra_attribute.infection", 
+    drop = FALSE
+  ]
+)
 colnames(df) <- "Infection"
 
 # (opcional pero recomendable) asegurar factor
@@ -427,7 +495,7 @@ pheatmap(
 
 This time point shows a very similar behaviour to that in the 2-hours time, which could mean that the dynamics in response to the infection of _A. fumigatus conidia_ follows an equivalent expression pattern as the infection evolves.
 
-```{r CLeaning the variables}
+```{r Cleaning the variables space}
 ## Cleaning the variables in the NameSpace
 rm(list = ls())
 invisible(gc())
