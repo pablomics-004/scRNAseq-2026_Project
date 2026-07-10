@@ -1,5 +1,9 @@
 # Differential Expression Analysis
 ## Aspergillus fumigatus Infection in Airway Epithelial Cells
+
+[![R](https://img.shields.io/badge/R-4.x-blue.svg)]()
+[![Quarto](https://img.shields.io/badge/Quarto-447099?logo=quarto&logoColor=white)]()
+
 ### Overview
 
 This project performs a differential gene expression analysis using RNA-seq data from recount3 to investigate the transcriptional response of airway epithelial cells infected with Aspergillus fumigatus conidia.
